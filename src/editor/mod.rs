@@ -6,6 +6,7 @@ use std::time::SystemTime;
 mod buffer;
 mod constants;
 mod cursor;
+pub mod engine;
 mod terminal;
 
 pub use crate::editor::constants::*;
