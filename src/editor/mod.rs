@@ -29,7 +29,7 @@ impl Keys {
 pub struct Editor {
     pub mode: EditorModes,
     pub cursor: Cursor,
-    state: EditorCommands,
+    state: EditorHealth,
     terminal: Terminal,
     append_buffer: AppendBuffer,
     data: AppendBuffer,
@@ -44,7 +44,7 @@ impl Editor {
         Self {
             mode: EditorModes::Normal,
             cursor: Cursor::new(),
-            state: EditorCommands::Healthy,
+            state: EditorHealth::Healthy,
             terminal: Terminal::new(stdin, stdout),
             append_buffer: AppendBuffer::default(),
             data: AppendBuffer::default(),
@@ -101,7 +101,7 @@ impl Editor {
             log::debug!("Mode {:?}", self.mode);
             self.render();
             let option = self.process_key_press().unwrap();
-            if option == EditorCommands::Exit {
+            if option == EditorHealth::Exit {
                 break;
             }
         }
@@ -118,9 +118,9 @@ impl Editor {
         self.data.update_buffers();
         Ok(())
     }
-    pub(crate) fn change_mode(&mut self, m: EditorModes) -> Option<EditorCommands> {
+    pub(crate) fn change_mode(&mut self, m: EditorModes) -> Option<EditorHealth> {
         self.mode = m;
-        Some(EditorCommands::Healthy)
+        Some(EditorHealth::Healthy)
     }
     // Gets the display index row axis index and return row printable c_x, c_y
     pub(crate) fn set_status_message(&mut self, ins: &str) {
@@ -267,7 +267,7 @@ impl Editor {
         self.append_buffer.append(b"\x1B[?25h");
         self.append_buffer.write(&mut self.terminal.stdout);
     }
-    pub(crate) fn process_key_press(&mut self) -> Option<EditorCommands> {
+    pub(crate) fn process_key_press(&mut self) -> Option<EditorHealth> {
         let key = self.terminal.read_key();
         //let exit_key = Keys::cntrl(b'q');
         match (key, self.mode) {
@@ -276,16 +276,18 @@ impl Editor {
             (Some(k), EditorModes::Insert) => self.handle_insert_mode(k),
         }
     }
-    pub(crate) fn handle_normal_mode(&mut self, k: u8) -> Option<EditorCommands> {
+    pub(crate) fn handle_normal_mode(&mut self, k: u8) -> Option<EditorHealth> {
         match k {
             //TODO: These also move cursor
             x if x == Keys::cntrl(b'u') || x == Keys::cntrl(b'd') => self.navigate(k),
             b'h' | b'l' | b'j' | b'k' => self.navigate(k),
             b'a' | b'I' | b'A' => self.move_cursor_insert(k),
             b':' => self.parse_status_cmd_blocking(),
+            //b'n' => self.go_to_reg(),
+            b'/' => self.find_in_file_blocking(),
             b'\x1B' => self.change_mode(EditorModes::Normal),
             b'i' => self.change_mode(EditorModes::Insert),
-            _ => Some(EditorCommands::Healthy),
+            _ => Some(EditorHealth::Healthy),
         }
     }
     pub(crate) fn save_buffer(&mut self, file_name: &str) -> Result<(), ()> {
@@ -319,37 +321,37 @@ impl Editor {
         self.save_buffer(file_name).unwrap();
         Ok(())
     }
-    pub(crate) fn exit_editor(&mut self) -> Option<EditorCommands> {
+    pub(crate) fn exit_editor(&mut self) -> Option<EditorHealth> {
         let _ = self.terminal.stdout.write(b"\x1b[2J");
         let _ = self.terminal.stdout.write(b"\x1b[H");
-        Some(EditorCommands::Exit)
+        Some(EditorHealth::Exit)
     }
-    pub(crate) fn run_cmd(&mut self, args: Vec<&str>) -> Option<EditorCommands> {
+    pub(crate) fn run_cmd(&mut self, args: Vec<&str>) -> Option<EditorHealth> {
         //Replace this with YIM engine later
         let args_length = args.len();
         if args_length <= 0 {
-            return Some(EditorCommands::Healthy);
+            return Some(EditorHealth::Healthy);
         }
         let args_args = &args[1..];
         match args[0] {
             "w" => {
                 self.save_file(&args_args.join(""));
-                Some(EditorCommands::Healthy)
+                Some(EditorHealth::Healthy)
             }
             "s" | "search" => {
                 self.find_in_file(&args_args.join(""));
-                Some(EditorCommands::Healthy)
+                Some(EditorHealth::Healthy)
             }
             "o" => {
                 self.open(&args_args.join(""));
-                Some(EditorCommands::Healthy)
+                Some(EditorHealth::Healthy)
             }
             "q" => {
                 if self.dirty != 0 {
                     self.set_status_message(
                         "You have unsaved changes, press :q! to quit without saving",
                     );
-                    Some(EditorCommands::Healthy)
+                    Some(EditorHealth::Healthy)
                 } else {
                     self.exit_editor()
                 }
@@ -361,11 +363,51 @@ impl Editor {
             }
             _ => {
                 self.set_status_message("This command does not exist!!!");
-                Some(EditorCommands::Healthy)
+                Some(EditorHealth::Healthy)
             }
         }
     }
-    pub(crate) fn parse_status_cmd_blocking(&mut self) -> Option<EditorCommands> {
+    pub(crate) fn find_in_file_blocking(&mut self) -> Option<EditorHealth> {
+        //In this mode we show user typed value.
+        //self.terminal.control_echo(true);
+        // TODO: Hacky render fix alter
+        self.cursor
+            .naive_move_cursor_2d(&mut self.terminal, self.cursor.rows + 2, 0);
+        self.clear_status_message_from_editor();
+        let mut cmd = String::new();
+        self.cursor
+            .naive_move_cursor_2d(&mut self.terminal, self.cursor.rows + 2, 2);
+        // REFREFREFACTOR
+        loop {
+            let key = self.terminal.read_key();
+            if key.unwrap() == b'\x7F' {
+                //BACKSPACE is clicked
+                // ALL this to have backspace HAHAHA
+                cmd.pop();
+                self.cursor
+                    .naive_move_cursor(&mut self.terminal, CursorDirections::Left, 1);
+                if self.terminal.stdout.write(b" ").unwrap() as u32 != 1 {
+                    log::error!("Couldn't write");
+                }
+                self.cursor
+                    .naive_move_cursor(&mut self.terminal, CursorDirections::Left, 1);
+                continue;
+            }
+            if key.unwrap() == 13 as u8 {
+                //Until ENTER is clicked
+                break;
+            } else {
+                if self.terminal.stdout.write(&[key.unwrap()]).unwrap() as u32 != 1 {
+                    log::error!("Couldn't write",);
+                }
+            }
+            //self.find_in_file(&[key.unwrap()]);
+        }
+        log::debug!("{:?} {}", cmd, cmd.len());
+        //self.terminal.control_echo(false);
+        Some(EditorHealth::Healthy)
+    }
+    pub(crate) fn parse_status_cmd_blocking(&mut self) -> Option<EditorHealth> {
         //In this mode we show user typed value.
         //self.terminal.control_echo(true);
         // TODO: Hacky render fix alter
@@ -405,63 +447,71 @@ impl Editor {
         //self.terminal.control_echo(false);
         self.run_cmd(cmd.split(" ").collect())
     }
-    pub(crate) fn handle_insert_mode(&mut self, k: u8) -> Option<EditorCommands> {
+    pub(crate) fn handle_insert_mode(&mut self, k: u8) -> Option<EditorHealth> {
         match k {
             b'\x1B' => self.change_mode(EditorModes::Normal),
             b'\x7F' => self.remove_char(),
             _ => self.insert_char(k),
         }
     }
-    pub(crate) fn move_cursor_insert(&mut self, k: u8) -> Option<EditorCommands> {
+    pub(crate) fn move_cursor_insert(&mut self, k: u8) -> Option<EditorHealth> {
         match k {
             b'I' => {
                 self.cursor
-                    .move_cursor(&self.data.new_lines, CursorDirections::LineBegin, 1);
+                    .move_cursor(&self.data.new_lines, CursorDirections::LineBegin, 1)
+                    .unwrap();
                 self.change_mode(EditorModes::Insert);
             }
             b'A' => {
                 self.cursor
-                    .move_cursor(&self.data.new_lines, CursorDirections::LineEnd, 1);
+                    .move_cursor(&self.data.new_lines, CursorDirections::LineEnd, 1)
+                    .unwrap();
                 self.change_mode(EditorModes::Insert);
             }
             b'a' => {
                 self.cursor
-                    .move_cursor(&self.data.new_lines, CursorDirections::Right, 1);
+                    .move_cursor(&self.data.new_lines, CursorDirections::Right, 1)
+                    .unwrap();
                 self.change_mode(EditorModes::Insert);
             }
             _ => unreachable!(),
         }
-        Some(EditorCommands::Healthy)
+        Some(EditorHealth::Healthy)
     }
-    pub(crate) fn navigate(&mut self, k: u8) -> Option<EditorCommands> {
+    pub(crate) fn navigate(&mut self, k: u8) -> Option<EditorHealth> {
         // TODO: Make here better A lot of repetittions
         match k {
             b'h' => self
                 .cursor
-                .move_cursor(&self.data.new_lines, CursorDirections::Left, 1),
+                .move_cursor(&self.data.new_lines, CursorDirections::Left, 1)
+                .unwrap(),
             b'j' => self
                 .cursor
-                .move_cursor(&self.data.new_lines, CursorDirections::Down, 1),
+                .move_cursor(&self.data.new_lines, CursorDirections::Down, 1)
+                .unwrap(),
             b'k' => self
                 .cursor
-                .move_cursor(&self.data.new_lines, CursorDirections::Up, 1),
+                .move_cursor(&self.data.new_lines, CursorDirections::Up, 1)
+                .unwrap(),
             b'l' => self
                 .cursor
-                .move_cursor(&self.data.new_lines, CursorDirections::Right, 1),
-            x if x == Keys::cntrl(b'd') => {
-                self.cursor
-                    .move_cursor(&self.data.new_lines, CursorDirections::Down, 20)
-            }
-            x if x == Keys::cntrl(b'u') => {
-                self.cursor
-                    .move_cursor(&self.data.new_lines, CursorDirections::Up, 20)
-            }
+                .move_cursor(&self.data.new_lines, CursorDirections::Right, 1)
+                .unwrap(),
+            x if x == Keys::cntrl(b'd') => self
+                .cursor
+                .move_cursor(&self.data.new_lines, CursorDirections::Down, 20)
+                .unwrap(),
+            x if x == Keys::cntrl(b'u') => self
+                .cursor
+                .move_cursor(&self.data.new_lines, CursorDirections::Up, 20)
+                .unwrap(),
             _ => unreachable!(),
         }
+        Some(EditorHealth::Healthy)
     }
-    pub(crate) fn remove_char(&mut self) -> Option<EditorCommands> {
+    pub(crate) fn remove_char(&mut self) -> Option<EditorHealth> {
         if self.cursor.c_x == 0 && self.cursor.c_y == 0 {
-            return Some(EditorCommands::Healthy); //Early return
+            return Some(EditorHealth::Healthy); //Early return
         }
         //let (index_l, index_r) = self.calculate_row_of_insert_indices(self.c_y as usize);
         //self.c_x = self.data.buffer[index_l..index_r].len() - 1;
@@ -474,9 +524,9 @@ impl Editor {
         self.cursor
             .move_cursor(&self.data.new_lines, CursorDirections::Left, 1);
         self.data.update_buffers();
-        Some(EditorCommands::Healthy)
+        Some(EditorHealth::Healthy)
     }
-    pub(crate) fn insert_char(&mut self, ch: u8) -> Option<EditorCommands> {
+    pub(crate) fn insert_char(&mut self, ch: u8) -> Option<EditorHealth> {
         log::debug!("Handling new {}", ch);
         if ch == 13 as u8 || self.cursor.c_y == self.cursor.cols {
             let ind = self.cursor.calculate_file_index(
@@ -497,6 +547,6 @@ impl Editor {
             self.cursor.c_x += 1;
         }
         self.dirty = 1;
-        Some(EditorCommands::Healthy)
+        Some(EditorHealth::Healthy)
     }
 }

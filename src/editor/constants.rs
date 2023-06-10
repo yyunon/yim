@@ -9,7 +9,7 @@ pub enum CursorDirections {
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
-pub enum EditorCommands {
+pub enum EditorHealth {
     Exit,
     Healthy,
 }

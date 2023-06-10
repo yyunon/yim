@@ -75,7 +75,7 @@ impl Cursor {
         new_lines: &Vec<i32>,
         direction: CursorDirections,
         offset: usize,
-    ) -> Option<EditorCommands> {
+    ) -> Result<(), ()> {
         // TODO: Make here better A lot of repetittions
         let mut row_insert_size = 0;
         if self.c_y < self.rows {
@@ -138,7 +138,7 @@ impl Cursor {
         if row_insert_size != 0 && self.c_x > row_insert_size {
             self.c_x = row_insert_size - 1;
         }
-        Some(EditorCommands::Healthy)
+        Ok(())
     }
     pub(crate) fn naive_move_cursor(
         &mut self,
