@@ -137,32 +137,60 @@ impl Editor {
     }
     pub(crate) fn draw(&mut self) {
         for _y in 0..self.cursor.rows {
+            log::debug!("Renderng row {}", _y);
             let file_row = _y + self.cursor.row_offset;
             if file_row >= self.data.new_lines.len() {
                 self.append_buffer.append(b"~");
             } else {
+                log::debug!("Append");
                 // TODO Ref here HANDLE COL limits
                 let (index_l, index_r) = self
                     .cursor
                     .calculate_row_of_insert_indices(file_row as usize, &self.data.new_lines);
                 // TODO Def very Bad
+                let mut v: Vec<(usize, usize)> = Vec::new();
                 for (_, (high_l, high_r)) in self.highlight_register.iter().enumerate() {
-                    if high_l > &index_l {
-                        self.append_buffer
-                            .append(&self.data.buffer[index_l..*high_l]);
-                        self.append_buffer.append(b"\x1B[0;33m"); //YELLOW
-                        self.append_buffer
-                            .append(&self.data.buffer[*high_l..*high_r]);
-                        self.append_buffer.append(b"\x1B[0m");
-                        self.append_buffer
-                            .append(&self.data.buffer[*high_r..index_r]);
+                    if *high_l >= index_l && *high_r <= index_r {
+                        v.push((*high_l, *high_r))
                     }
                 }
-                if self.highlight_register.len() == 0 {
+                log::debug!("{:?}", v);
+                let mut prev = -1 as i32;
+                log::debug!("{:?}", self.append_buffer.buffer);
+                for (_, (high_l, high_r)) in v.iter().enumerate() {
+                    if prev < 0 {
+                        log::debug!("{},{} {},{}", index_l, *high_l, *high_l, *high_r);
+                        self.append_buffer
+                            .append(&self.data.buffer[index_l..*high_l]);
+                        self.append_buffer.append(constants::BIYellow); //YELLOW
+                                                                        //let offset = constants::BIYellow.len();
+                        self.append_buffer
+                            .append(&self.data.buffer[*high_l..*high_r]);
+                        self.append_buffer.append(constants::Color_Off);
+                        self.append_buffer.append(b"\x1B[0m");
+                        //self.append_buffer
+                        //   .append(&self.data.buffer[*high_r..index_r]);
+                    } else {
+                        log::debug!("{},{} {},{}", prev, *high_l, *high_l, *high_r);
+                        self.append_buffer
+                            .append(&self.data.buffer[prev as usize..*high_l]);
+                        self.append_buffer.append(constants::BIYellow); //YELLOW
+                        self.append_buffer
+                            .append(&self.data.buffer[*high_l..*high_r]);
+                        self.append_buffer.append(constants::Color_Off);
+                    }
+                    prev = *high_r as i32;
+                }
+                log::debug!("{:?}", self.append_buffer.buffer);
+                if v.len() == 0 {
                     self.append_buffer
                         .append(&self.data.buffer[index_l..index_r]);
+                } else {
+                    self.append_buffer
+                        .append(&self.data.buffer[prev as usize..index_r]);
                 }
             }
+            log::debug!("{:?}", self.append_buffer.buffer);
             self.append_buffer.append(b"\x1B[K");
             self.append_buffer.append(b"\r\n");
         }
