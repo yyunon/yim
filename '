@@ -1,0 +1,24 @@
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub enum CursorDirections {
+    LineBegin,
+    LineEnd,
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+pub struct Cursor {
+    c_x: usize,
+    c_y: usize,
+}
+
+impl Cursor {
+    pub fn new() -> Self {
+        Self { c_x: 0, c_y: 0 }
+    }
+    pub fn clear() {
+        self.c_x = 0;
+        self.c_y = 0;
+    }
+}

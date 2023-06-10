@@ -4,9 +4,14 @@ use std::io::{BufReader, BufWriter, Read, Stdin, Stdout, Write};
 use std::time::SystemTime;
 
 mod buffer;
+mod constants;
+mod cursor;
 mod terminal;
 
+pub use crate::editor::constants::*;
+
 pub use crate::editor::buffer::AppendBuffer;
+pub use crate::editor::cursor::Cursor;
 pub use crate::editor::terminal::Terminal;
 
 extern crate libc;
@@ -21,35 +26,11 @@ impl Keys {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
-pub enum CursorDirections {
-    Up,
-    Down,
-    Left,
-    Right,
-}
-
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
-pub enum EditorCommands {
-    Exit,
-    Healthy,
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
-pub enum EditorModes {
-    Normal,
-    Insert,
-}
-
 pub struct Editor {
     pub mode: EditorModes,
+    pub cursor: Cursor,
     state: EditorCommands,
     terminal: Terminal,
-    rows: usize,
-    cols: usize,
-    c_x: usize,
-    c_y: usize,
-    row_offset: usize,
     append_buffer: AppendBuffer,
     data: AppendBuffer,
     files: String,
@@ -62,13 +43,9 @@ impl Editor {
     pub(crate) fn new(stdin: Stdin, stdout: Stdout) -> Self {
         Self {
             mode: EditorModes::Normal,
+            cursor: Cursor::new(),
             state: EditorCommands::Healthy,
             terminal: Terminal::new(stdin, stdout),
-            rows: 0,
-            cols: 0,
-            row_offset: 0,
-            c_x: 0,
-            c_y: 0,
             append_buffer: AppendBuffer::default(),
             data: AppendBuffer::default(),
             files: "".to_string(),
@@ -80,30 +57,54 @@ impl Editor {
     }
     pub(crate) fn init_editor(&mut self) {
         self.terminal.enable_raw_mode();
-        self.c_x = 0;
-        self.c_y = 0;
+        self.cursor.clear();
         self.set_window_size();
-        self.rows -= 2;
+        self.cursor.rows -= 2;
+    }
+    pub(crate) fn set_window_size(&mut self) {
+        let (cols, rows) = self.terminal.term_size();
+        if cols == 0 {
+            self.calculate_window()
+        } else {
+            self.cursor.rows(rows);
+            self.cursor.cols(cols);
+        }
+    }
+    pub(crate) fn calculate_window(&mut self) {
+        let mut buffer = [0u8; 32];
+        //print!("{}[6n", 27 as char);
+        if self.terminal.stdout.write(b"\x1B[6n").unwrap() != 4 {
+            log::error!("coulnd't write device status report");
+            return;
+        }
+        self.terminal.stdout.lock().flush().unwrap();
+        let mut i = 0;
+        //^[[5;1R
+        while i < buffer.len() - 1 {
+            self.terminal.stdin.read(&mut buffer).unwrap();
+            if buffer[i] == b'R' {
+                break;
+            }
+            i += 1;
+        }
+        buffer[i] = b'\0';
+
+        if buffer[1] != b'[' {
+            log::error!("Couldn't parse device status report");
+            return;
+        }
+        self.cursor.rows = buffer[2] as usize;
+        self.cursor.cols = buffer[6] as usize;
     }
     pub(crate) fn launch_engine(&mut self) {
         loop {
             log::debug!("Mode {:?}", self.mode);
-            log::debug!("C_X {}, C_Y {}, RO {}", self.x(), self.y(), self.ro());
             self.render();
             let option = self.process_key_press().unwrap();
             if option == EditorCommands::Exit {
                 break;
             }
         }
-    }
-    pub(crate) fn x(&self) -> usize {
-        self.c_x
-    }
-    pub(crate) fn y(&self) -> usize {
-        self.c_y
-    }
-    pub(crate) fn ro(&self) -> usize {
-        self.row_offset
     }
     pub(crate) fn open(&mut self, input_file: &str) -> std::io::Result<()> {
         self.files = input_file.to_string();
@@ -121,63 +122,7 @@ impl Editor {
         self.mode = m;
         Some(EditorCommands::Healthy)
     }
-    pub(crate) fn set_window_size(&mut self) {
-        let (cols, rows) = self.terminal.term_size();
-        if cols == 0 {
-            self.set_cursor_position()
-        } else {
-            self.rows = rows;
-            self.cols = cols;
-        }
-        log::debug!("App Rows: {}, Columns: {}", self.rows, self.cols);
-    }
-    pub(crate) fn calculate_row_offset(&mut self) {
-        if self.c_y < self.row_offset {
-            self.row_offset = self.c_y;
-        } else if self.c_y >= self.row_offset + self.rows {
-            self.row_offset = self.c_y - self.rows + 1;
-        }
-    }
-    pub(crate) fn cursor_limits(&self, t: usize, mode: bool) -> usize {
-        if t < 0 {
-            return 0;
-        }
-        match mode {
-            false => {
-                if t > self.cols {
-                    self.cols as usize
-                } else {
-                    t as usize
-                }
-            }
-            true => {
-                if t > self.rows {
-                    self.rows as usize
-                } else {
-                    t as usize
-                }
-            }
-        }
-    }
-    // Gets the cursor returns the location in the file
-    pub(crate) fn calculate_file_index(&self, x: usize, y: usize) -> usize {
-        //We know that new lines array is sorted as that is the wau we insert
-        let (il, ir) = self.calculate_row_of_insert_indices(y);
-        log::debug!("{},{}", il, ir);
-        return il + x;
-    }
     // Gets the display index row axis index and return row printable c_x, c_y
-    pub(crate) fn calculate_row_of_insert_indices(&self, i: usize) -> (usize, usize) {
-        if i >= self.data.new_lines.len() {
-            return (0, 0);
-        }
-        let index_r = self.data.new_lines[i] as usize;
-        let mut index_l = 0;
-        if i != 0 {
-            index_l = self.data.new_lines[i - 1] + 1;
-        }
-        (index_l as usize, index_r as usize)
-    }
     pub(crate) fn set_status_message(&mut self, ins: &str) {
         self.status_message = ins.to_string();
     }
@@ -191,13 +136,15 @@ impl Editor {
         self.terminal.stdout.write(cmd_buffer.as_bytes()).unwrap();
     }
     pub(crate) fn draw(&mut self) {
-        for _y in 0..self.rows {
-            let file_row = _y + self.row_offset;
+        for _y in 0..self.cursor.rows {
+            let file_row = _y + self.cursor.row_offset;
             if file_row >= self.data.new_lines.len() {
                 self.append_buffer.append(b"~");
             } else {
                 // TODO Ref here HANDLE COL limits
-                let (index_l, index_r) = self.calculate_row_of_insert_indices(file_row as usize);
+                let (index_l, index_r) = self
+                    .cursor
+                    .calculate_row_of_insert_indices(file_row as usize, &self.data.new_lines);
                 // TODO Def very Bad
                 for (_, (high_l, high_r)) in self.highlight_register.iter().enumerate() {
                     if high_l > &index_l {
@@ -229,7 +176,7 @@ impl Editor {
         //rstatus
         // ROW COUNT
         let mut status = String::new();
-        let mut rstatus: String = format!(" [{}/{}] ", self.c_y + 1, self.rows);
+        let mut rstatus: String = format!(" [{}/{}] ", self.cursor.c_y + 1, self.cursor.rows);
         // DATE TIME
         let datetime: DateTime<Utc> = self.status_message_time.into();
         let dt_string = datetime.format("%T %d/%m/%Y").to_string();
@@ -255,15 +202,15 @@ impl Editor {
         });
 
         //WRITE STAT
-        if status.len() > self.cols {
+        if status.len() > self.cursor.cols {
             self.append_buffer
-                .append_str(&status[0..self.cols as usize]);
+                .append_str(&status[0..self.cursor.cols as usize]);
         } else {
             self.append_buffer.append_str(&status);
         }
         let mut len = 0;
-        while len < self.cols {
-            if self.cols - len - status.len() == rstatus.len() {
+        while len < self.cursor.cols {
+            if self.cursor.cols - len - status.len() == rstatus.len() {
                 self.append_buffer.append_str(&rstatus);
                 break;
             } else {
@@ -275,7 +222,7 @@ impl Editor {
         self.append_buffer.append(b"\r\n");
     }
     pub(crate) fn render(&mut self) {
-        self.calculate_row_offset();
+        self.cursor.calculate_row_offset();
         self.append_buffer.append(b"\x1B[?25l");
         self.append_buffer.append(b"\x1B[H");
         self.draw();
@@ -284,39 +231,13 @@ impl Editor {
         self.append_buffer.append_str(
             format!(
                 "\x1B[{};{}H",
-                (self.c_y - self.row_offset) + 1,
-                self.c_x + 1
+                (self.cursor.c_y - self.cursor.row_offset) + 1,
+                self.cursor.c_x + 1
             )
             .as_str(),
         );
         self.append_buffer.append(b"\x1B[?25h");
         self.append_buffer.write(&mut self.terminal.stdout);
-    }
-    pub(crate) fn set_cursor_position(&mut self) {
-        let mut buffer = [0u8; 32];
-        //print!("{}[6n", 27 as char);
-        if self.terminal.stdout.write(b"\x1B[6n").unwrap() != 4 {
-            log::error!("coulnd't write device status report");
-            return;
-        }
-        self.terminal.stdout.lock().flush().unwrap();
-        let mut i = 0;
-        //^[[5;1R
-        while i < buffer.len() - 1 {
-            self.terminal.stdin.read(&mut buffer).unwrap();
-            if buffer[i] == b'R' {
-                break;
-            }
-            i += 1;
-        }
-        buffer[i] = b'\0';
-
-        if buffer[1] != b'[' {
-            log::error!("Couldn't parse device status report");
-            return;
-        }
-        self.rows = buffer[2] as usize;
-        self.cols = buffer[6] as usize;
     }
     pub(crate) fn process_key_press(&mut self) -> Option<EditorCommands> {
         let key = self.terminal.read_key();
@@ -332,72 +253,11 @@ impl Editor {
             //TODO: These also move cursor
             x if x == Keys::cntrl(b'u') || x == Keys::cntrl(b'd') => self.navigate(k),
             b'h' | b'l' | b'j' | b'k' => self.navigate(k),
-            b'a' => self.move_cursor_insert(k),
+            b'a' | b'I' | b'A' => self.move_cursor_insert(k),
             b':' => self.parse_status_cmd_blocking(),
             b'\x1B' => self.change_mode(EditorModes::Normal),
             b'i' => self.change_mode(EditorModes::Insert),
             _ => Some(EditorCommands::Healthy),
-        }
-    }
-    pub(crate) fn naive_move_cursor_2d(&mut self, x: usize, y: usize) {
-        // Does not calculate borders
-        if self
-            .terminal
-            .stdout
-            .write(format!("\x1B[{};{}H", x, y).as_bytes())
-            .unwrap() as u32
-            != 5
-        {
-            log::error!("Couldn't go to command mode",);
-        }
-    }
-    pub(crate) fn naive_move_cursor(&mut self, direction: CursorDirections, offset: usize) {
-        // Does not calculate borders
-        match direction {
-            CursorDirections::Up => {
-                if self
-                    .terminal
-                    .stdout
-                    .write(format!("\x1B[{}A", offset).as_bytes())
-                    .unwrap() as u32
-                    != 3
-                {
-                    log::error!("Couldn't go to command mode");
-                }
-            }
-            CursorDirections::Down => {
-                if self
-                    .terminal
-                    .stdout
-                    .write(format!("\x1B[{}B", offset).as_bytes())
-                    .unwrap() as u32
-                    != 3
-                {
-                    log::error!("Couldn't go to command mode");
-                }
-            }
-            CursorDirections::Right => {
-                if self
-                    .terminal
-                    .stdout
-                    .write(format!("\x1B[{}C", offset).as_bytes())
-                    .unwrap() as u32
-                    != 3
-                {
-                    log::error!("Couldn't go to command mode");
-                }
-            }
-            CursorDirections::Left => {
-                if self
-                    .terminal
-                    .stdout
-                    .write(format!("\x1B[{}D", offset).as_bytes())
-                    .unwrap() as u32
-                    != 3
-                {
-                    log::error!("Couldn't go to command mode");
-                }
-            }
         }
     }
     pub(crate) fn save_buffer(&mut self, file_name: &str) -> Result<(), ()> {
@@ -481,10 +341,12 @@ impl Editor {
         //In this mode we show user typed value.
         //self.terminal.control_echo(true);
         // TODO: Hacky render fix alter
-        self.naive_move_cursor_2d(self.rows + 2, 0);
+        self.cursor
+            .naive_move_cursor_2d(&mut self.terminal, self.cursor.rows + 2, 0);
         self.clear_status_message_from_editor();
         let mut cmd = String::new();
-        self.naive_move_cursor_2d(self.rows + 2, 2);
+        self.cursor
+            .naive_move_cursor_2d(&mut self.terminal, self.cursor.rows + 2, 2);
         // REFREFREFACTOR
         loop {
             let key = self.terminal.read_key();
@@ -492,11 +354,13 @@ impl Editor {
                 //BACKSPACE is clicked
                 // ALL this to have backspace HAHAHA
                 cmd.pop();
-                self.naive_move_cursor(CursorDirections::Left, 1);
+                self.cursor
+                    .naive_move_cursor(&mut self.terminal, CursorDirections::Left, 1);
                 if self.terminal.stdout.write(b" ").unwrap() as u32 != 1 {
                     log::error!("Couldn't write");
                 }
-                self.naive_move_cursor(CursorDirections::Left, 1);
+                self.cursor
+                    .naive_move_cursor(&mut self.terminal, CursorDirections::Left, 1);
                 continue;
             }
             if key.unwrap() == 13 as u8 {
@@ -521,138 +385,88 @@ impl Editor {
         }
     }
     pub(crate) fn move_cursor_insert(&mut self, k: u8) -> Option<EditorCommands> {
-        // TODO: Make here better A lot of repetittions
-        let mut row_insert_size = 0;
-        if self.c_y < self.rows {
-            let (index_l, index_r) = self.calculate_row_of_insert_indices(self.c_y as usize);
-            row_insert_size = self.data.buffer[index_l..index_r].len();
-        }
         match k {
+            b'I' => {
+                self.cursor
+                    .move_cursor(&self.data.new_lines, CursorDirections::LineBegin, 1);
+                self.change_mode(EditorModes::Insert);
+            }
+            b'A' => {
+                self.cursor
+                    .move_cursor(&self.data.new_lines, CursorDirections::LineEnd, 1);
+                self.change_mode(EditorModes::Insert);
+            }
             b'a' => {
-                if row_insert_size != 0 && self.c_x < row_insert_size - 1 {
-                    self.c_x += 1
-                } else if row_insert_size != 0 && self.c_x >= row_insert_size - 1 {
-                    self.c_y += 1;
-                    self.c_x = 0;
-                }
+                self.cursor
+                    .move_cursor(&self.data.new_lines, CursorDirections::Right, 1);
                 self.change_mode(EditorModes::Insert);
             }
             _ => unreachable!(),
-        }
-        if self.c_y < self.rows {
-            let (index_l, index_r) = self.calculate_row_of_insert_indices(self.c_y as usize);
-            row_insert_size = self.data.buffer[index_l..index_r].len();
-        }
-        if row_insert_size != 0 && self.c_x > row_insert_size {
-            self.c_x = row_insert_size - 1;
-        }
-        Some(EditorCommands::Healthy)
-    }
-    pub(crate) fn move_cursor(
-        &mut self,
-        direction: CursorDirections,
-        offset: usize,
-    ) -> Option<EditorCommands> {
-        // TODO: Make here better A lot of repetittions
-        let mut row_insert_size = 0;
-        if self.c_y < self.rows {
-            let (index_l, index_r) = self.calculate_row_of_insert_indices(self.c_y as usize);
-            row_insert_size = self.data.buffer[index_l..index_r].len();
-        }
-        match direction {
-            CursorDirections::Left => {
-                if self.c_x != 0 {
-                    self.c_x -= offset
-                } else if self.c_y > 0 {
-                    self.move_cursor(CursorDirections::Up, offset);
-                    //self.c_y -= offset;
-                    let (index_l, index_r) = self.calculate_row_of_insert_indices(self.c_y);
-                    row_insert_size = self.data.buffer[index_l..index_r].len();
-                    if offset > row_insert_size {
-                        self.c_x = 0
-                    } else {
-                        self.c_x = row_insert_size - offset + 1
-                    }
-                }
-            }
-            CursorDirections::Down => {
-                if (self.data.new_lines.len() as i32) - (offset as i32) > self.c_y as i32 {
-                    self.c_y += offset
-                } else {
-                    self.c_y = self.data.new_lines.len() - 1
-                }
-            }
-            CursorDirections::Up => {
-                if self.c_y > offset - 1 {
-                    self.c_y -= offset
-                } else {
-                    self.c_y = 0
-                }
-            }
-            CursorDirections::Right => {
-                if row_insert_size != 0 && self.c_x < row_insert_size - offset + 1 {
-                    self.c_x += offset
-                } else if row_insert_size != 0
-                    && self.c_x >= row_insert_size - offset + 1
-                    && self.c_y != self.data.new_lines.len() - offset
-                {
-                    self.c_y += offset;
-                    self.c_x = 0;
-                }
-            }
-        }
-        if self.c_y < self.rows {
-            let (index_l, index_r) = self.calculate_row_of_insert_indices(self.c_y as usize);
-            row_insert_size = self.data.buffer[index_l..index_r].len();
-        }
-        if row_insert_size != 0 && self.c_x > row_insert_size {
-            self.c_x = row_insert_size - 1;
         }
         Some(EditorCommands::Healthy)
     }
     pub(crate) fn navigate(&mut self, k: u8) -> Option<EditorCommands> {
         // TODO: Make here better A lot of repetittions
         match k {
-            b'h' => self.move_cursor(CursorDirections::Left, 1),
-            b'j' => self.move_cursor(CursorDirections::Down, 1),
-            b'k' => self.move_cursor(CursorDirections::Up, 1),
-            b'l' => self.move_cursor(CursorDirections::Right, 1),
-            x if x == Keys::cntrl(b'd') => self.move_cursor(CursorDirections::Down, 20),
-            x if x == Keys::cntrl(b'u') => self.move_cursor(CursorDirections::Up, 20),
+            b'h' => self
+                .cursor
+                .move_cursor(&self.data.new_lines, CursorDirections::Left, 1),
+            b'j' => self
+                .cursor
+                .move_cursor(&self.data.new_lines, CursorDirections::Down, 1),
+            b'k' => self
+                .cursor
+                .move_cursor(&self.data.new_lines, CursorDirections::Up, 1),
+            b'l' => self
+                .cursor
+                .move_cursor(&self.data.new_lines, CursorDirections::Right, 1),
+            x if x == Keys::cntrl(b'd') => {
+                self.cursor
+                    .move_cursor(&self.data.new_lines, CursorDirections::Down, 20)
+            }
+            x if x == Keys::cntrl(b'u') => {
+                self.cursor
+                    .move_cursor(&self.data.new_lines, CursorDirections::Up, 20)
+            }
             _ => unreachable!(),
         }
     }
     pub(crate) fn remove_char(&mut self) -> Option<EditorCommands> {
-        log::debug!("{} {} {}", self.c_x, self.c_y, self.row_offset);
-        if self.c_x == 0 && self.c_y == 0 {
+        if self.cursor.c_x == 0 && self.cursor.c_y == 0 {
             return Some(EditorCommands::Healthy); //Early return
         }
         //let (index_l, index_r) = self.calculate_row_of_insert_indices(self.c_y as usize);
         //self.c_x = self.data.buffer[index_l..index_r].len() - 1;
-        let ind = self.calculate_file_index(self.c_x as usize, self.c_y as usize) - 1;
+        let ind = self.cursor.calculate_file_index(
+            &self.data.new_lines,
+            self.cursor.c_x as usize,
+            self.cursor.c_y as usize,
+        ) - 1;
         self.data.remove(ind);
-        log::debug!("{} {} {}", self.c_x, self.c_y, self.row_offset);
-        log::debug!("{:?}", self.data.buffer);
-        self.move_cursor(CursorDirections::Left, 1);
-        log::debug!("{} {} {}", self.c_x, self.c_y, self.row_offset);
-        log::debug!("{:?}", self.data.buffer);
+        self.cursor
+            .move_cursor(&self.data.new_lines, CursorDirections::Left, 1);
         self.data.update_buffers();
-        log::debug!("{} {} {}", self.c_x, self.c_y, self.row_offset);
-        log::debug!("{:?}", self.data.buffer);
         Some(EditorCommands::Healthy)
     }
     pub(crate) fn insert_char(&mut self, ch: u8) -> Option<EditorCommands> {
         log::debug!("Handling new {}", ch);
-        if ch == 13 as u8 || self.c_y == self.cols {
-            let ind = self.calculate_file_index(self.c_x as usize, self.c_y as usize);
+        if ch == 13 as u8 || self.cursor.c_y == self.cursor.cols {
+            let ind = self.cursor.calculate_file_index(
+                &self.data.new_lines,
+                self.cursor.c_x as usize,
+                self.cursor.c_y as usize,
+            );
             self.data.insert(ind, b'\n');
-            self.c_x = 0;
-            self.c_y += 1;
+            self.cursor.c_x = 0;
+            self.cursor.c_y += 1;
         } else {
-            let ind = self.calculate_file_index(self.c_x as usize, self.c_y as usize);
-            log::debug!("il {}", self.c_x);
+            let ind = self.cursor.calculate_file_index(
+                &self.data.new_lines,
+                self.cursor.c_x as usize,
+                self.cursor.c_y as usize,
+            );
             self.data.insert(ind, ch);
-            self.c_x += 1;
+            self.cursor.c_x += 1;
         }
         self.dirty = 1;
         Some(EditorCommands::Healthy)
