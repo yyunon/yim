@@ -2,6 +2,7 @@ use std::io::Write;
 
 pub use crate::editor::constants::*;
 pub use crate::editor::terminal::*;
+pub use crate::editor::EditorConfigs;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Cursor {
@@ -10,6 +11,7 @@ pub struct Cursor {
     pub rows: usize,
     pub cols: usize,
     pub row_offset: usize,
+    pub editor_configs: EditorConfigs,
 }
 
 impl Cursor {
@@ -20,6 +22,7 @@ impl Cursor {
             rows: 0,
             cols: 0,
             row_offset: 0,
+            editor_configs: EditorConfigs::default(),
         }
     }
     pub fn clear(&mut self) {
@@ -27,13 +30,33 @@ impl Cursor {
         self.c_y = 0;
         self.rows = 0;
         self.cols = 0;
-        self.row_offset = 0;
+        self.editor_configs = EditorConfigs::default();
     }
-    pub(crate) fn x(&mut self, d: usize) {
-        self.c_x = d
+    pub(crate) fn x(&self) -> usize {
+        self.c_x + self.editor_configs.x_offset
     }
-    pub(crate) fn y(&mut self, d: usize) {
-        self.c_y = d
+    pub(crate) fn y(&self) -> usize {
+        self.c_y + self.editor_configs.y_offset
+    }
+    pub(crate) fn absx(&self) -> usize {
+        self.c_x
+    }
+    pub(crate) fn absy(&self) -> usize {
+        self.c_y
+    }
+    pub(crate) fn up_x(&mut self, d: usize) {
+        self.c_x += d;
+    }
+    pub(crate) fn up_y(&mut self, d: usize) {
+        self.c_y += d;
+    }
+    pub(crate) fn set_x(&mut self, d: usize) {
+        self.c_x = d;
+        //self.c_x = d;
+    }
+    pub(crate) fn set_y(&mut self, d: usize) {
+        self.c_y = d;
+        //self.c_y = d;
     }
     pub(crate) fn rows(&mut self, d: usize) {
         self.rows = d
@@ -96,10 +119,10 @@ impl Cursor {
                         self.calculate_row_of_insert_indices(self.c_y, &new_lines);
                     //row_insert_size = self.data.buffer[index_l..index_r].len();
                     row_insert_size = index_r - index_l;
-                    if offset > row_insert_size {
+                    if offset > row_insert_size + 0 {
                         self.c_x = 0
                     } else {
-                        self.c_x = row_insert_size - offset + 1
+                        self.c_x = row_insert_size - offset + 1 + 0
                     }
                 }
             }
@@ -118,10 +141,10 @@ impl Cursor {
                 }
             }
             CursorDirections::Right => {
-                if row_insert_size != 0 && self.c_x < row_insert_size - offset + 1 {
+                if row_insert_size != 0 && self.c_x < row_insert_size - offset + 1 + 0 {
                     self.c_x += offset
                 } else if row_insert_size != 0
-                    && self.c_x >= row_insert_size - offset + 1
+                    && self.c_x >= row_insert_size - offset + 1 + 0
                     && self.c_y != new_lines.len() - offset
                 {
                     self.c_y += offset;
@@ -135,8 +158,8 @@ impl Cursor {
             //row_insert_size = self.data.buffer[index_l..index_r].len();
             row_insert_size = index_r - index_l;
         }
-        if row_insert_size != 0 && self.c_x > row_insert_size {
-            self.c_x = row_insert_size - 1;
+        if row_insert_size != 0 && self.c_x > row_insert_size + 0 {
+            self.c_x = row_insert_size - 1 + 0;
         }
         Ok(())
     }

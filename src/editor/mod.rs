@@ -6,7 +6,7 @@ use std::time::SystemTime;
 mod buffer;
 mod constants;
 mod cursor;
-pub mod engine;
+//pub mod engine;
 mod terminal;
 
 pub use crate::editor::constants::*;
@@ -27,6 +27,12 @@ impl Keys {
     }
 }
 
+#[derive(Default, Debug, Eq, PartialEq, PartialOrd, Ord, Copy, Clone)]
+pub struct EditorConfigs {
+    pub x_offset: usize,
+    pub y_offset: usize,
+}
+
 pub struct Editor {
     pub mode: EditorModes,
     pub cursor: Cursor,
@@ -39,6 +45,7 @@ pub struct Editor {
     status_message_time: SystemTime,
     dirty: i8,
     highlight_register: Vec<(usize, usize)>,
+    pub editor_configs: EditorConfigs,
 }
 impl Editor {
     pub(crate) fn new(stdin: Stdin, stdout: Stdout) -> Self {
@@ -54,6 +61,7 @@ impl Editor {
             status_message_time: SystemTime::now(),
             dirty: 0,
             highlight_register: Vec::default(),
+            editor_configs: EditorConfigs::default(),
         }
     }
     pub(crate) fn init_editor(&mut self) {
@@ -61,6 +69,7 @@ impl Editor {
         self.cursor.clear();
         self.set_window_size();
         self.cursor.rows -= 2;
+        self.cursor.editor_configs = self.editor_configs.clone();
     }
     pub(crate) fn set_window_size(&mut self) {
         let (cols, rows) = self.terminal.term_size();
@@ -138,12 +147,12 @@ impl Editor {
     }
     pub(crate) fn draw(&mut self) {
         for _y in 0..self.cursor.rows {
-            log::debug!("Renderng row {}", _y);
             let file_row = _y + self.cursor.row_offset;
-            if file_row >= self.data.new_lines.len() {
+            self.append_buffer
+                .append_str(&format!("  {}", file_row).to_string());
+            if file_row >= self.data.new_lines.len() && file_row <= self.data.new_lines.len() + 1 {
                 self.append_buffer.append(b"~");
             } else {
-                log::debug!("Append");
                 // TODO Ref here HANDLE COL limits
                 let (index_l, index_r) = self
                     .cursor
@@ -155,12 +164,9 @@ impl Editor {
                         v.push((*high_l, *high_r))
                     }
                 }
-                log::debug!("{:?}", v);
                 let mut prev = -1 as i32;
-                log::debug!("{:?}", self.append_buffer.buffer);
                 for (_, (high_l, high_r)) in v.iter().enumerate() {
                     if prev < 0 {
-                        log::debug!("{},{} {},{}", index_l, *high_l, *high_l, *high_r);
                         self.append_buffer
                             .append(&self.data.buffer[index_l..*high_l]);
                         self.append_buffer.append(constants::BIYellow); //YELLOW
@@ -172,7 +178,6 @@ impl Editor {
                         //self.append_buffer
                         //   .append(&self.data.buffer[*high_r..index_r]);
                     } else {
-                        log::debug!("{},{} {},{}", prev, *high_l, *high_l, *high_r);
                         self.append_buffer
                             .append(&self.data.buffer[prev as usize..*high_l]);
                         self.append_buffer.append(constants::BIYellow); //YELLOW
@@ -182,7 +187,6 @@ impl Editor {
                     }
                     prev = *high_r as i32;
                 }
-                log::debug!("{:?}", self.append_buffer.buffer);
                 if v.len() == 0 {
                     self.append_buffer
                         .append(&self.data.buffer[index_l..index_r]);
@@ -191,7 +195,6 @@ impl Editor {
                         .append(&self.data.buffer[prev as usize..index_r]);
                 }
             }
-            log::debug!("{:?}", self.append_buffer.buffer);
             self.append_buffer.append(b"\x1B[K");
             self.append_buffer.append(b"\r\n");
         }
@@ -205,7 +208,7 @@ impl Editor {
         //rstatus
         // ROW COUNT
         let mut status = String::new();
-        let mut rstatus: String = format!(" [{}/{}] ", self.cursor.c_y + 1, self.cursor.rows);
+        let mut rstatus: String = format!(" [{}/{}] ", self.cursor.y() + 1, self.cursor.rows);
         // DATE TIME
         let datetime: DateTime<Utc> = self.status_message_time.into();
         let dt_string = datetime.format("%T %d/%m/%Y").to_string();
@@ -260,8 +263,8 @@ impl Editor {
         self.append_buffer.append_str(
             format!(
                 "\x1B[{};{}H",
-                (self.cursor.c_y - self.cursor.row_offset) + 1,
-                self.cursor.c_x + 1
+                (self.cursor.y() - self.cursor.row_offset) + 1,
+                self.cursor.x() + 1
             )
             .as_str(),
         );
@@ -511,15 +514,15 @@ impl Editor {
         Some(EditorHealth::Healthy)
     }
     pub(crate) fn remove_char(&mut self) -> Option<EditorHealth> {
-        if self.cursor.c_x == 0 && self.cursor.c_y == 0 {
+        if self.cursor.absx() == 0 && self.cursor.absy() == 0 {
             return Some(EditorHealth::Healthy); //Early return
         }
         //let (index_l, index_r) = self.calculate_row_of_insert_indices(self.c_y as usize);
         //self.c_x = self.data.buffer[index_l..index_r].len() - 1;
         let ind = self.cursor.calculate_file_index(
             &self.data.new_lines,
-            self.cursor.c_x as usize,
-            self.cursor.c_y as usize,
+            self.cursor.absx() as usize,
+            self.cursor.absy() as usize,
         ) - 1;
         self.data.remove(ind);
         self.cursor
@@ -529,23 +532,25 @@ impl Editor {
     }
     pub(crate) fn insert_char(&mut self, ch: u8) -> Option<EditorHealth> {
         log::debug!("Handling new {}", ch);
-        if ch == 13 as u8 || self.cursor.c_y == self.cursor.cols {
+        log::debug!("{:?}", self.cursor);
+        if ch == 13 as u8 || self.cursor.y() == self.cursor.cols {
             let ind = self.cursor.calculate_file_index(
                 &self.data.new_lines,
-                self.cursor.c_x as usize,
-                self.cursor.c_y as usize,
+                self.cursor.absx() as usize,
+                self.cursor.absy() as usize,
             );
             self.data.insert(ind, b'\n');
-            self.cursor.c_x = 0;
-            self.cursor.c_y += 1;
+            self.cursor.set_x(0);
+            self.cursor.up_y(1);
         } else {
+            log::debug!("{:?}", self.cursor);
             let ind = self.cursor.calculate_file_index(
                 &self.data.new_lines,
-                self.cursor.c_x as usize,
-                self.cursor.c_y as usize,
+                self.cursor.absx() as usize,
+                self.cursor.absy() as usize,
             );
             self.data.insert(ind, ch);
-            self.cursor.c_x += 1;
+            self.cursor.up_x(1);
         }
         self.dirty = 1;
         Some(EditorHealth::Healthy)
