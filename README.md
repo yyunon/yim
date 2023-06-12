@@ -1,4 +1,5 @@
-A recreational text editor in Rust
+## yim
+A recreational text editor in Rust on top of libc 
 
 This repo is still in development. The code is very cluttered and unorganized.
 
@@ -8,3 +9,6 @@ Supported features:
 - Insert and Normal mode 
 - Dirty 
 - Status bar
+
+Features on dev:
+- Undo/redo
