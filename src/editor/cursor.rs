@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::io::Write;
+use std::rc::Rc;
 
 pub use crate::editor::constants::*;
 pub use crate::editor::terminal::*;
@@ -15,15 +17,15 @@ pub struct Cursor {
 }
 
 impl Cursor {
-    pub fn new() -> Self {
-        Self {
+    pub fn new() -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Self {
             c_x: 0,
             c_y: 0,
             rows: 0,
             cols: 0,
             row_offset: 0,
             editor_configs: EditorConfigs::default(),
-        }
+        }))
     }
     pub fn clear(&mut self) {
         self.c_x = 0;
@@ -101,7 +103,7 @@ impl Cursor {
     ) -> Result<(), ()> {
         // TODO: Make here better A lot of repetittions
         let mut row_insert_size = 0;
-        if self.c_y < self.rows {
+        if self.c_y < self.rows + self.row_offset {
             let (index_l, index_r) =
                 self.calculate_row_of_insert_indices(self.c_y as usize, &new_lines);
             row_insert_size = index_r - index_l;
@@ -119,7 +121,7 @@ impl Cursor {
                         self.calculate_row_of_insert_indices(self.c_y, &new_lines);
                     //row_insert_size = self.data.buffer[index_l..index_r].len();
                     row_insert_size = index_r - index_l;
-                    if offset > row_insert_size + 0 {
+                    if offset > row_insert_size {
                         self.c_x = 0
                     } else {
                         self.c_x = row_insert_size - offset + 1 + 0
@@ -141,11 +143,11 @@ impl Cursor {
                 }
             }
             CursorDirections::Right => {
-                if row_insert_size != 0 && self.c_x < row_insert_size - offset + 1 + 0 {
+                if row_insert_size != 0 && self.c_x < row_insert_size - offset + 1 {
                     self.c_x += offset
                 } else if row_insert_size != 0
-                    && self.c_x >= row_insert_size - offset + 1 + 0
-                    && self.c_y != new_lines.len() - offset
+                    && self.c_x >= row_insert_size - offset + 1
+                    && self.c_y >= new_lines.len() - offset + self.row_offset
                 {
                     self.c_y += offset;
                     self.c_x = 0;
@@ -155,17 +157,16 @@ impl Cursor {
         if self.c_y < self.rows {
             let (index_l, index_r) =
                 self.calculate_row_of_insert_indices(self.c_y as usize, &new_lines);
-            //row_insert_size = self.data.buffer[index_l..index_r].len();
             row_insert_size = index_r - index_l;
         }
-        if row_insert_size != 0 && self.c_x > row_insert_size + 0 {
+        if row_insert_size != 0 && self.c_x > row_insert_size {
             self.c_x = row_insert_size - 1 + 0;
         }
         Ok(())
     }
     pub(crate) fn naive_move_cursor(
-        &mut self,
-        terminal: &mut Terminal,
+        &self,
+        terminal: &Rc<RefCell<Terminal>>,
         direction: CursorDirections,
         offset: usize,
     ) {
@@ -174,6 +175,7 @@ impl Cursor {
             CursorDirections::LineBegin | CursorDirections::LineEnd => !unimplemented!(),
             CursorDirections::Up => {
                 if terminal
+                    .borrow_mut()
                     .stdout
                     .write(format!("\x1B[{}A", offset).as_bytes())
                     .unwrap() as u32
@@ -184,6 +186,7 @@ impl Cursor {
             }
             CursorDirections::Down => {
                 if terminal
+                    .borrow_mut()
                     .stdout
                     .write(format!("\x1B[{}B", offset).as_bytes())
                     .unwrap() as u32
@@ -194,6 +197,7 @@ impl Cursor {
             }
             CursorDirections::Right => {
                 if terminal
+                    .borrow_mut()
                     .stdout
                     .write(format!("\x1B[{}C", offset).as_bytes())
                     .unwrap() as u32
@@ -204,6 +208,7 @@ impl Cursor {
             }
             CursorDirections::Left => {
                 if terminal
+                    .borrow_mut()
                     .stdout
                     .write(format!("\x1B[{}D", offset).as_bytes())
                     .unwrap() as u32
@@ -214,9 +219,15 @@ impl Cursor {
             }
         }
     }
-    pub(crate) fn naive_move_cursor_2d(&mut self, terminal: &mut Terminal, x: usize, y: usize) {
+    pub(crate) fn naive_move_cursor_2d(
+        &self,
+        terminal: &Rc<RefCell<Terminal>>,
+        x: usize,
+        y: usize,
+    ) {
         // Does not calculate borders
         if terminal
+            .borrow_mut()
             .stdout
             .write(format!("\x1B[{};{}H", x, y).as_bytes())
             .unwrap() as u32

@@ -1,5 +1,7 @@
 use std::fmt;
 use std::io::{Stdout, Write};
+use std::ops::RangeBounds;
+use std::slice::SliceIndex;
 struct SliceDisplay<'a, T: 'a>(&'a [T]);
 
 impl<'a, T: fmt::Display + 'a> fmt::Display for SliceDisplay<'a, T> {
@@ -40,6 +42,15 @@ impl AppendBuffer {
     }
     pub(crate) fn remove(&mut self, index: usize) {
         self.buffer.remove(index);
+        self.size -= 1;
+        // update later
+        //self.update_buffers();
+    }
+    pub(crate) fn remove_slice<R>(&mut self, range: R)
+    where
+        R: RangeBounds<usize>,
+    {
+        self.buffer.drain(range);
         self.size -= 1;
         // update later
         //self.update_buffers();
@@ -92,5 +103,15 @@ impl AppendBuffer {
     pub(crate) fn free(&mut self) {
         self.size = 0;
         self.buffer.clear();
+    }
+}
+
+impl<Idx> std::ops::Index<Idx> for AppendBuffer
+where
+    Idx: std::slice::SliceIndex<[u8]>,
+{
+    type Output = Idx::Output;
+    fn index(&self, index: Idx) -> &Self::Output {
+        &self.buffer[index]
     }
 }

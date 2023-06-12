@@ -18,7 +18,7 @@ pub use crate::editor::EditorConfigs;
 fn main() -> std::io::Result<()> {
     //engine_example();
     let ed = EditorConfigs {
-        x_offset: 3,
+        x_offset: 4,
         y_offset: 0,
     };
     syslog::init(Facility::LOG_USER, log::LevelFilter::Debug, Some("yim")).unwrap();

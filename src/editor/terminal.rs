@@ -1,7 +1,9 @@
+use std::cell::RefCell;
 use std::fmt;
 use std::io::{Read, Stdin, Stdout, Write};
 use std::os::fd::AsRawFd;
 use std::process::exit;
+use std::rc::Rc;
 
 extern crate libc;
 
@@ -28,7 +30,7 @@ pub struct Terminal {
     pub(crate) stdout: Stdout,
 }
 impl Terminal {
-    pub(crate) fn new(stdin: Stdin, stdout: Stdout) -> Self {
+    pub(crate) fn new(stdin: Stdin, stdout: Stdout) -> Rc<RefCell<Self>> {
         let mut raw = libc::termios {
             c_iflag: 0,
             c_oflag: 0,
@@ -40,11 +42,11 @@ impl Terminal {
             c_ospeed: 0,
         };
         unsafe { tcgetattr(libc::STDIN_FILENO, &mut raw) };
-        Self {
+        Rc::new(RefCell::new(Self {
             raw: raw,
             stdin: stdin,
             stdout: stdout,
-        }
+        }))
     }
 
     pub(crate) fn enable_raw_mode(&mut self) {
@@ -115,6 +117,7 @@ impl Terminal {
     pub(crate) fn disable_raw_mode(&mut self) {
         unsafe { tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &mut self.raw) };
     }
+
     pub(crate) fn read_key(&mut self) -> Option<u8> {
         let mut res: Option<u8> = None;
         let mut buf = [0u8; 1];
@@ -128,6 +131,22 @@ impl Terminal {
             res = Some(buf[0]);
         }
         res
+    }
+
+    pub(crate) fn flush(&mut self) {
+        self.stdout.lock().flush().unwrap();
+    }
+
+    pub(crate) fn write(&mut self, stream: &[u8]) {
+        if self.stdout.write(stream).unwrap() != stream.len() {
+            log::error!("coulnd't write stream {:?}", stream);
+            return;
+        }
+    }
+    pub(crate) fn read(&mut self, buff: &mut [u8]) {
+        //let mut buffer = [0u8; 32];
+        self.stdin.read(buff).unwrap();
+        //buffer
     }
 }
 impl fmt::Debug for Terminal {
