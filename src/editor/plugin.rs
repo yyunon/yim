@@ -1,0 +1,3 @@
+struct Plugins;
+
+impl Plugins {}

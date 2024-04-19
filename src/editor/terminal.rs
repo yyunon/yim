@@ -1,9 +1,7 @@
-use std::cell::RefCell;
 use std::fmt;
 use std::io::{Read, Stdin, Stdout, Write};
 use std::os::fd::AsRawFd;
 use std::process::exit;
-use std::rc::Rc;
 
 extern crate libc;
 
@@ -23,14 +21,13 @@ fn die(msg: &char) {
     log::error!("{msg}");
     exit(1)
 }
-//#[derive(copy, clone)]
 pub struct Terminal {
     pub(crate) raw: libc::termios,
     pub(crate) stdin: Stdin,
     pub(crate) stdout: Stdout,
 }
 impl Terminal {
-    pub(crate) fn new(stdin: Stdin, stdout: Stdout) -> Rc<RefCell<Self>> {
+    pub(crate) fn new(stdin: Stdin, stdout: Stdout) -> Self {
         let mut raw = libc::termios {
             c_iflag: 0,
             c_oflag: 0,
@@ -42,11 +39,11 @@ impl Terminal {
             c_ospeed: 0,
         };
         unsafe { tcgetattr(libc::STDIN_FILENO, &mut raw) };
-        Rc::new(RefCell::new(Self {
+        Self {
             raw: raw,
             stdin: stdin,
             stdout: stdout,
-        }))
+        }
     }
 
     pub(crate) fn enable_raw_mode(&mut self) {

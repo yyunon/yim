@@ -4,10 +4,7 @@ use std::io::{stdin, stdout};
 use std::string::String;
 use syslog::Facility;
 
-use std::{
-    cell::RefCell,
-    rc::{Rc, Weak},
-};
+use std::sync::{Arc, Mutex};
 
 mod editor;
 //pub use crate::editor::engine::OpStack;
@@ -37,6 +34,6 @@ fn main() -> std::io::Result<()> {
         editor.open(openfile)?;
     }
     editor.set_status_message("Welcome Yuksel!");
-    editor.launch_engine();
+    editor::launch_engine(&mut editor);
     Ok(())
 }

@@ -1,3 +1,6 @@
+pub use crate::editor::constants::*;
+pub use crate::editor::Cursor;
+pub use crate::editor::Terminal;
 use std::fmt;
 use std::io::{Stdout, Write};
 use std::ops::RangeBounds;
@@ -19,7 +22,7 @@ impl<'a, T: fmt::Display + 'a> fmt::Display for SliceDisplay<'a, T> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct AppendBuffer {
     pub(crate) buffer: Vec<u8>,
     pub(crate) size: u32,
@@ -78,12 +81,10 @@ impl AppendBuffer {
         result
         //self.buffer.iter().position(|r| *r == d).unwrap()
     }
-    pub(crate) fn write(&mut self, stdout: &mut Stdout) {
+    pub(crate) fn write(&mut self, terminal: Terminal) {
         //log::debug!("{}", SliceDisplay(&self.buffer));
         //log::debug!("{:?}", SliceDisplay(&self.buffer));
-        if stdout.write(&self.buffer).unwrap() as u32 != self.size {
-            log::error!("Couldn't render");
-        }
+        terminal.write(&self.buffer);
         self.free();
     }
     pub(crate) fn update_buffers(&mut self) {
