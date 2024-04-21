@@ -1,56 +1,62 @@
 pub use crate::editor::constants::*;
 pub use crate::editor::AppendBuffer;
+pub use crate::editor::EditorControllers;
 pub use crate::editor::Cursor;
 pub use crate::editor::Terminal;
 pub use crate::editor::*;
 use chrono::DateTime;
 
 pub struct Renderer {
-    pub terminal: Terminal,
-    pub context: EditorContext,
     pub append_buffer: AppendBuffer,
 }
 
 impl Renderer {
-    pub(crate) fn new(terminal: Terminal, context: EditorContext) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            terminal: terminal,
-            context: context,
-            append_buffer: AppendBuffer::default(),
+            append_buffer: AppendBuffer::default()
         }
     }
 
-    pub(crate) fn render(&mut self, cursor: &mut Cursor, data: &AppendBuffer) {
-        //let context = &self.context;
-        //let mut terminal = self.terminal;
-        //let mut cursor = &*self.cursor.borrow_mut();
-        log::debug!("{:?}", cursor);
-        cursor.calculate_row_offset();
+    pub(crate) fn render(&mut self, 
+                        editor_controller: &mut EditorControllers, 
+                        editor_context: &EditorContext
+    ) {
+
+        log::debug!("{:?}", editor_controller.cursor);
+
+        editor_controller.cursor.calculate_row_offset();
         self.append_buffer.append(b"\x1B[?25l");
         self.append_buffer.append(b"\x1B[H");
 
-        Self::draw(self.context, cursor, data, &mut self.append_buffer);
-        Self::draw_status_bar(self.context, cursor, data, &mut self.append_buffer);
-        Self::draw_message_bar(self.context, &mut self.append_buffer);
+        Self::draw(editor_context, 
+                    &mut editor_controller.cursor, 
+                    &editor_controller.data, 
+                    &mut self.append_buffer);
+        Self::draw_status_bar(editor_context, 
+                              &mut editor_controller.cursor, 
+                              &editor_controller.data, 
+                              &mut self.append_buffer);
+        Self::draw_message_bar(editor_context, 
+                                &mut self.append_buffer);
 
-        if self.context.h_reg > 0 && self.context.mode == EditorModes::Normal {
-            let (i_x, i_y) = Self::file_index_to_cursor(self.context, data);
+        if editor_context.h_reg > 0 && editor_context.mode == EditorModes::Normal {
+            let (i_x, i_y) = Self::file_index_to_cursor(editor_context, &editor_controller.data);
             self.append_buffer.append_str(
                 format!(
                     "\x1B[{};{}H",
-                    i_y - cursor.row_offset + cursor.editor_configs.y_offset,
-                    i_x + cursor.editor_configs.x_offset
+                    i_y - editor_controller.cursor.row_offset + editor_controller.cursor.editor_configs.y_offset,
+                    i_x + editor_controller.cursor.editor_configs.x_offset
                 )
                 .as_str(),
             );
-        } else if self.context.line_reg != usize::MAX && self.context.mode == EditorModes::Normal {
-            let new_y = self.context.line_reg;
-            cursor.set_y(new_y);
+        } else if editor_context.line_reg != usize::MAX && editor_context.mode == EditorModes::Normal {
+            let new_y = editor_context.line_reg;
+            editor_controller.cursor.set_y(new_y);
             self.append_buffer.append_str(
                 format!(
                     "\x1B[{};{}H",
-                    (cursor.y() - cursor.row_offset) + 1,
-                    cursor.x() + 1
+                    (editor_controller.cursor.y() - editor_controller.cursor.row_offset) + 1,
+                    editor_controller.cursor.x() + 1
                 )
                 .as_str(),
             );
@@ -59,23 +65,23 @@ impl Renderer {
             self.append_buffer.append_str(
                 format!(
                     "\x1B[{};{}H",
-                    (cursor.y() - cursor.row_offset) + 1,
-                    cursor.x() + 1
+                    (editor_controller.cursor.y() - editor_controller.cursor.row_offset) + 1,
+                    editor_controller.cursor.x() + 1
                 )
                 .as_str(),
             );
         }
         self.append_buffer.append(b"\x1B[?25h");
-        self.append_buffer.write(self.terminal);
+        self.append_buffer.write(&mut editor_controller.terminal);
     }
 
-    pub(crate) fn draw_message_bar(context: EditorContext, append_buffer: &mut AppendBuffer) {
+    pub(crate) fn draw_message_bar(context: &EditorContext, append_buffer: &mut AppendBuffer) {
         //let context = t_context;
         append_buffer.append(b"\x1B[K");
         append_buffer.append_str(&context.status_message);
     }
     pub(crate) fn draw_status_bar(
-        context: EditorContext,
+        context: &EditorContext,
         cursor: &Cursor,
         data: &AppendBuffer,
         append_buffer: &mut AppendBuffer,
@@ -130,7 +136,7 @@ impl Renderer {
         append_buffer.append(b"\r\n");
     }
     pub(crate) fn draw(
-        context: EditorContext,
+        context: &EditorContext,
         cursor: &mut Cursor,
         data: &AppendBuffer,
         append_buffer: &mut AppendBuffer,
@@ -190,7 +196,7 @@ impl Renderer {
         }
     }
     pub(crate) fn file_index_to_cursor(
-        context: EditorContext,
+        context: &EditorContext,
         data: &AppendBuffer,
     ) -> (usize, usize) {
         //let context = *t_context;

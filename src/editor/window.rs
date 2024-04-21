@@ -1,45 +1,45 @@
 pub use crate::editor::cursor::Cursor;
 pub use crate::editor::cursor::Terminal;
 
+use super::terminal;
+
 pub struct Window {
     cursor: Cursor,
-    terminal: Terminal,
     n_rows: usize,
     n_cols: usize,
 }
 
 impl Window {
-    pub(crate) fn new(cursor: Cursor, terminal: Terminal) -> Self {
+    pub(crate) fn new(cursor: Cursor) -> Self {
         Self {
             cursor: cursor,
-            terminal: terminal,
             n_rows: 0,
             n_cols: 0,
         }
     }
-    pub(crate) fn init_window(&mut self) {
-        self.set_window_size();
+    pub(crate) fn init_window(&mut self, terminal: &mut Terminal) {
+        self.set_window_size(terminal);
     }
-    pub(crate) fn set_window_size(&mut self) {
-        let (cols, rows) = self.terminal.term_size();
+    pub(crate) fn set_window_size(&mut self, terminal: &mut Terminal) {
+        let (cols, rows) = terminal.term_size();
         if cols == 0 {
-            self.calculate_window()
+            self.calculate_window(terminal)
         } else {
             self.cursor.rows(rows);
             self.cursor.cols(cols);
         }
     }
-    pub(crate) fn calculate_window(&mut self) {
-        self.terminal.write(b"\x1B[6n");
+    pub(crate) fn calculate_window(&mut self, terminal: &mut Terminal) {
+        terminal.write(b"\x1B[6n");
 
-        self.terminal.flush();
+        terminal.flush();
 
         let mut buffer = [0u8; 32];
         //print!("{}[6n", 27 as char);
         let mut i = 0;
         //^[[5;1R
         while i < buffer.len() - 1 {
-            self.terminal.read(&mut buffer);
+            terminal.read(&mut buffer);
             if buffer[i] == b'R' {
                 break;
             }

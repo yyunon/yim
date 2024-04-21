@@ -12,6 +12,33 @@ pub struct Cursor {
     pub editor_configs: EditorConfigs,
 }
 
+pub(crate) fn naive_move_cursor(
+    terminal: &mut Terminal,
+    direction: CursorDirections,
+    offset: usize,
+) {
+    // Does not calculate borders
+    match direction {
+        CursorDirections::LineBegin | CursorDirections::LineEnd => !unimplemented!(),
+        CursorDirections::Up => {
+            terminal.write(format!("\x1B[{}A", offset).as_bytes());
+        }
+        CursorDirections::Down => {
+            terminal.write(format!("\x1B[{}B", offset).as_bytes());
+        }
+        CursorDirections::Right => {
+            terminal.write(format!("\x1B[{}C", offset).as_bytes());
+        }
+        CursorDirections::Left => {
+            terminal.write(format!("\x1B[{}D", offset).as_bytes());
+        }
+    }
+}
+pub(crate) fn naive_move_cursor_2d(terminal: &mut Terminal, x: usize, y: usize) {
+    // Does not calculate borders
+    terminal.write(format!("\x1B[{};{}H", x, y).as_bytes());
+}
+
 impl Cursor {
     pub fn new() -> Self {
         Self {
@@ -159,33 +186,6 @@ impl Cursor {
             self.c_x = row_insert_size - 1 + 0;
         }
         Ok(())
-    }
-    pub(crate) fn naive_move_cursor(
-        &self,
-        terminal: &Terminal,
-        direction: CursorDirections,
-        offset: usize,
-    ) {
-        // Does not calculate borders
-        match direction {
-            CursorDirections::LineBegin | CursorDirections::LineEnd => !unimplemented!(),
-            CursorDirections::Up => {
-                terminal.write(format!("\x1B[{}A", offset).as_bytes());
-            }
-            CursorDirections::Down => {
-                terminal.write(format!("\x1B[{}B", offset).as_bytes());
-            }
-            CursorDirections::Right => {
-                terminal.write(format!("\x1B[{}C", offset).as_bytes());
-            }
-            CursorDirections::Left => {
-                terminal.write(format!("\x1B[{}D", offset).as_bytes());
-            }
-        }
-    }
-    pub(crate) fn naive_move_cursor_2d(&self, terminal: &Terminal, x: usize, y: usize) {
-        // Does not calculate borders
-        terminal.write(format!("\x1B[{};{}H", x, y).as_bytes());
     }
     pub(crate) fn cursor_limits(&self, t: usize, mode: bool) -> usize {
         if t < 0 {

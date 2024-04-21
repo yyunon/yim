@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+pub use crate::editor::EditorControllers;
+
 pub trait IOperator {
     type OpType;
     fn new(signature: String, function: Self::OpType) -> Arc<Mutex<Self>>;
@@ -46,7 +48,7 @@ pub mod operations {
         pub use crate::editor::AppendBuffer;
         pub use crate::editor::Cursor;
         pub(crate) fn remove_char(
-            cursor: &Cursor,
+            cursor: &mut Cursor,
             data: &mut AppendBuffer,
         ) -> Option<EditorHealth> {
             if cursor.absx() == 0 && cursor.absy() == 0 {
@@ -66,7 +68,7 @@ pub mod operations {
         }
 
         pub(crate) fn insert_char(
-            cursor: &Cursor,
+            cursor: &mut Cursor,
             data: &mut AppendBuffer,
             ch: u8,
         ) -> Option<EditorHealth> {
@@ -103,10 +105,8 @@ pub mod operations {
         pub use crate::editor::Terminal;
         pub use crate::editor::*;
         pub(crate) fn delete_operations(
-            context: &EditorContext,
-            cursor: &Cursor,
-            terminal: &Terminal,
-            data: &mut AppendBuffer,
+            context: &mut EditorContext,
+            editor_controller: &mut EditorControllers,
             k: u8,
         ) -> Option<EditorHealth> {
             let mut x = [0u8; 4];
@@ -116,7 +116,7 @@ pub mod operations {
                 if cmd.len() == 2 {
                     break;
                 }
-                let key = terminal.read_key().unwrap();
+                let key = editor_controller.terminal.read_key().unwrap();
                 if key == 27 as u8 {
                     break;
                 }
@@ -124,53 +124,51 @@ pub mod operations {
             }
 
             let _ = match cmd.as_str() {
-                "dd" => delete_line(context, cursor, terminal, data),
-                "dk" => delete(context, cursor, terminal, data, CursorDirections::Up),
-                "dj" => delete(context, cursor, terminal, data, CursorDirections::Down),
-                "dl" => delete(context, cursor, terminal, data, CursorDirections::Right),
-                "dh" => delete(context, cursor, terminal, data, CursorDirections::Left),
+                "dd" => delete_line(context, editor_controller),
+                "dk" => delete(context, editor_controller, CursorDirections::Up),
+                "dj" => delete(context, editor_controller, CursorDirections::Down),
+                "dl" => delete(context, editor_controller, CursorDirections::Right),
+                "dh" => delete(context, editor_controller, CursorDirections::Left),
                 _ => (),
             };
 
             Some(EditorHealth::Healthy)
         }
         pub(crate) fn delete(
-            context: &EditorContext,
-            cursor: &Cursor,
-            terminal: &Terminal,
-            data: &mut AppendBuffer,
+            context: &mut EditorContext,
+            editor_controller: &mut EditorControllers,
             direction: CursorDirections,
         ) {
             match direction {
                 CursorDirections::Up => {
-                    cursor.move_cursor(&data.new_lines, CursorDirections::Up, 1);
-                    delete_line(context, cursor, terminal, data);
-                    delete_line(context, cursor, terminal, data);
+                    editor_controller.cursor.move_cursor(&editor_controller.data.new_lines, CursorDirections::Up, 1);
+                    delete_line(context, editor_controller);
+                    delete_line(context, editor_controller);
                 }
                 CursorDirections::Down => {
-                    delete_line(context, cursor, terminal, data);
-                    delete_line(context, cursor, terminal, data);
+                    delete_line(context, editor_controller);
+                    delete_line(context, editor_controller);
                 }
                 CursorDirections::Left => {
-                    let ind = cursor.calculate_file_index(
-                        &data.new_lines,
-                        cursor.absx() as usize,
-                        cursor.absy() as usize,
+                    let ind = editor_controller.cursor.calculate_file_index(
+                        &editor_controller.data.new_lines,
+                        editor_controller.cursor.absx() as usize,
+                        editor_controller.cursor.absy() as usize,
                     ) - 1;
-                    data.remove(ind);
-                    cursor.move_cursor(&data.new_lines, CursorDirections::Left, 1);
-                    data.update_buffers();
+                    editor_controller.data.remove(ind);
+                    editor_controller.cursor.move_cursor(&editor_controller.data.new_lines, CursorDirections::Left, 1);
+                    editor_controller.data.update_buffers();
                 }
                 CursorDirections::Right => {
-                    cursor.move_cursor(&data.new_lines, CursorDirections::Right, 1);
-                    let ind = cursor.calculate_file_index(
-                        &data.new_lines,
-                        cursor.absx() as usize,
-                        cursor.absy() as usize,
+                    editor_controller.cursor.move_cursor(&editor_controller.data.new_lines, CursorDirections::Right, 1);
+                    let ind = editor_controller.cursor.calculate_file_index(
+                        &editor_controller.data.new_lines,
+                        editor_controller.cursor.absx() as usize,
+                        editor_controller.cursor.absy() as usize,
                     ) - 1;
-                    data.remove(ind);
-                    cursor.move_cursor(&data.new_lines, CursorDirections::Left, 1);
-                    data.update_buffers();
+                    editor_controller.data.remove(ind);
+                    editor_controller.cursor.move_cursor(&editor_controller.data.new_lines, CursorDirections::Left, 1);
+                    editor_controller.data.update_buffers();
                 }
                 _ => (),
             }
@@ -178,30 +176,28 @@ pub mod operations {
             //self.c_x = self.data.buffer[index_l..index_r].len() - 1;
         }
         pub(crate) fn delete_line(
-            context: &EditorContext,
-            cursor: &Cursor,
-            terminal: &Terminal,
-            data: &mut AppendBuffer,
+            context: &mut EditorContext,
+            editor_controller: &mut EditorControllers,
         ) {
             //let (index_l, index_r) = self.calculate_row_of_insert_indices(self.c_y as usize);
             //self.c_x = self.data.buffer[index_l..index_r].len() - 1;
             let mut line_begin = 0;
-            if cursor.y() == 0 {
+            if editor_controller.cursor.y() == 0 {
                 line_begin = 0;
             } else {
-                line_begin = data.new_lines[cursor.y() - 1] as usize;
+                line_begin = editor_controller.data.new_lines[editor_controller.cursor.y() - 1] as usize;
             }
-            let mut line_end = data.new_lines[cursor.y()] as usize;
+            let mut line_end = editor_controller.data.new_lines[editor_controller.cursor.y()] as usize;
             log::debug!("Deleting lines {}..{}", line_begin, line_end);
-            data.remove_slice(line_begin..line_end);
+            editor_controller.data.remove_slice(line_begin..line_end);
             //cursor
             //    .lock().unwrap()
             //    .move_cursor(&data.new_lines, CursorDirections::Up, 1);
             context.dirty = 1;
-            data.update_buffers();
+            editor_controller.data.update_buffers();
         }
         pub(crate) fn clear_status_message_from_editor(
-            terminal: Terminal,
+            terminal: &mut Terminal,
             status_message: &String,
         ) {
             let status_len: usize = status_message.capacity();
@@ -212,55 +208,5 @@ pub mod operations {
             }
             terminal.write(cmd_buffer.as_bytes());
         }
-        //pub(crate) fn find_in_file_blocking(
-        //    graphics: &Arc<Mutex<Renderer>>,
-        //    context: &Arc<Mutex<EditorContext>>,
-        //    cursor: &Arc<Mutex<Cursor>>,
-        //    terminal: &Arc<Mutex<Terminal>>,
-        //    data: &AppendBuffer,
-        //) -> Option<EditorHealth> {
-        //    //In this mode we show user typed value.
-        //    //self.terminal.control_echo(true);
-        //    // TODO: Hacky render fix alter
-        //    let mut t_c = &mut *cursor.
-        //    let mut t_ter = &mut *terminal.
-        //    t_c.naive_move_cursor_2d(&terminal, t_c.rows + 2, 0);
-        //    clear_status_message_from_editor(
-        //        terminal.clone(),
-        //        &context.status_message,
-        //    );
-        //    let mut word = String::new();
-        //    t_c.naive_move_cursor_2d(&terminal, t_c.rows + 2, 2);
-        //    // REFREFREFACTOR
-        //    loop {
-        //        let key = terminal.read_key().unwrap();
-        //        if key == b'\x7F' {
-        //            //BACKSPACE is clicked
-        //            // ALL this to have backspace HAHAHA
-        //            word.pop();
-        //            //t_c.naive_move_cursor(&terminal, CursorDirections::Left, 1);
-        //            //terminal.write(b" ");
-        //            //t_c.naive_move_cursor(&terminal, CursorDirections::Left, 1);
-        //            continue;
-        //        }
-        //        if key == 27 as u8 || key == b'\r' {
-        //            //Until ENTER is clicked
-        //            break;
-        //        } else {
-        //            word.push(key as char);
-        //            t_ter.write(&[key]);
-        //            context.highlight_register = data.find(&word);
-        //            let mut append_buffer = AppendBuffer::default();
-        //            //draw(context, cursor, data, &mut append_buffer);
-        //            //log::debug!("Found: {:?}", word);
-        //            //log::debug!("Found: {:?}", context.highlight_register);
-        //            graphics
-        //                .lock()
-        //                .unwrap()
-        //                .render(t_c, &data, &mut append_buffer);
-        //        }
-        //    }
-        //    Some(EditorHealth::Healthy)
-        //}
     }
 }

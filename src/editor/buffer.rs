@@ -81,7 +81,7 @@ impl AppendBuffer {
         result
         //self.buffer.iter().position(|r| *r == d).unwrap()
     }
-    pub(crate) fn write(&mut self, terminal: Terminal) {
+    pub(crate) fn write(&mut self, terminal: &mut Terminal) {
         //log::debug!("{}", SliceDisplay(&self.buffer));
         //log::debug!("{:?}", SliceDisplay(&self.buffer));
         terminal.write(&self.buffer);

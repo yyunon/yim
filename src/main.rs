@@ -34,6 +34,6 @@ fn main() -> std::io::Result<()> {
         editor.open(openfile)?;
     }
     editor.set_status_message("Welcome Yuksel!");
-    editor::launch_engine(&mut editor);
+    editor.launch_editor();
     Ok(())
 }
