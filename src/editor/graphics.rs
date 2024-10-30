@@ -21,12 +21,13 @@ impl Renderer {
                         editor_controller: &mut EditorControllers, 
                         editor_context: &EditorContext
     ) {
-
-        log::debug!("{:?}", editor_controller.cursor);
+        log::debug!("Rendering now...");
 
         editor_controller.cursor.calculate_row_offset();
         self.append_buffer.append(b"\x1B[?25l");
         self.append_buffer.append(b"\x1B[H");
+        log::debug!("{:?}", editor_controller.cursor);
+        log::debug!("{:?}", editor_controller.data);
 
         Self::draw(editor_context, 
                     &mut editor_controller.cursor, 
@@ -38,7 +39,6 @@ impl Renderer {
                               &mut self.append_buffer);
         Self::draw_message_bar(editor_context, 
                                 &mut self.append_buffer);
-
         if editor_context.h_reg > 0 && editor_context.mode == EditorModes::Normal {
             let (i_x, i_y) = Self::file_index_to_cursor(editor_context, &editor_controller.data);
             self.append_buffer.append_str(
@@ -72,11 +72,11 @@ impl Renderer {
             );
         }
         self.append_buffer.append(b"\x1B[?25h");
-        self.append_buffer.write(&mut editor_controller.terminal);
+        //self.append_buffer.write(&mut editor_controller.terminal);
+        editor_controller.terminal.write(self.append_buffer.buffer.as_ref());
     }
 
     pub(crate) fn draw_message_bar(context: &EditorContext, append_buffer: &mut AppendBuffer) {
-        //let context = t_context;
         append_buffer.append(b"\x1B[K");
         append_buffer.append_str(&context.status_message);
     }
@@ -143,29 +143,31 @@ impl Renderer {
     ) {
         //let context = *t_context;
         for _y in 0..cursor.rows {
-            let file_row = _y + cursor.row_offset;
-            let absolute_numbers = &format!(
-                "{:>width$} ",
-                file_row,
-                width = cursor.editor_configs.x_offset - 1
-            )
-            .to_string();
-            append_buffer.append_str(&absolute_numbers);
             //cursor.editor_configs.x_offset = absolute_numbers.len();
+            let file_row = _y + cursor.row_offset;
             if file_row >= data.new_lines.len() && file_row <= data.new_lines.len() {
                 append_buffer.append(b"~");
             } else {
+                let absolute_numbers = &format!(
+                    "{:>width$} ",
+                    file_row,
+                    width = cursor.editor_configs.x_offset - 1
+                )
+                .to_string();
+                append_buffer.append_str(&absolute_numbers);
                 // TODO Ref here HANDLE COL limits
                 let (index_l, index_r) =
                     cursor.calculate_row_of_insert_indices(file_row as usize, &data.new_lines);
+                log::debug!("{}, {}", index_l, index_r);
                 // TODO Def very Bad
                 let mut v: Vec<(usize, usize)> = Vec::new();
-
+                
                 for (_, (high_l, high_r)) in context.highlight_register.iter().enumerate() {
                     if *high_l >= index_l && *high_r <= index_r {
                         v.push((*high_l, *high_r))
                     }
                 }
+                log::debug!("{:?}", v);
                 let mut prev = -1 as i32;
                 for (_, (high_l, high_r)) in v.iter().enumerate() {
                     if prev < 0 {

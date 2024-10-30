@@ -71,7 +71,7 @@ pub struct Editor {
     pub editor_configs: EditorConfigs,
 }
 impl Editor {
-    pub(crate) fn new(stdin: Stdin, stdout: Stdout) -> Self {
+    pub(crate) fn new(stdin: Stdin, stdout: Stdout, editor_configs: Option<EditorConfigs>) -> Self {
         let ec = EditorContext {
             mode: EditorModes::Normal,
             state: EditorHealth::Healthy,
@@ -93,7 +93,7 @@ impl Editor {
                 data: AppendBuffer::default(),
             }),
             editor_context: Some(ec),
-            editor_configs: EditorConfigs::default(),
+            editor_configs: editor_configs.unwrap_or_else(|| EditorConfigs::default()),
             renderer: None,
         }
     }
@@ -101,32 +101,38 @@ impl Editor {
         let editor_controller = self.editor_controller.as_mut().unwrap();
         editor_controller.terminal.enable_raw_mode();
         editor_controller.cursor.clear();
-        editor_controller.window = Some(Window::new(
-            editor_controller.cursor
-        ));
+        editor_controller.window = Some(Window::new());
         editor_controller
             .window
             .as_mut()
-            .map(|w| w.set_window_size(&mut editor_controller.terminal));
+            .map(|w| w.set_window_size(&mut editor_controller.cursor, &mut editor_controller.terminal));
         editor_controller.cursor.rows -= 2;
         editor_controller.cursor.editor_configs = self.editor_configs.clone();
+
+        log::debug!("{:?}", editor_controller.cursor);
+        log::debug!("{:?}", editor_controller.window);
 
         self.renderer = Some(Renderer::new());
     }
     pub(crate) fn launch_editor(&mut self) {
-        log::debug!("Rendering thread is spawned");
-        let rend = self.renderer.as_mut();
-        let rendering_thread = &mut rend
-            .unwrap()
-            .render(&mut self.editor_controller.as_mut().unwrap(), 
-                    self.editor_context.as_ref().unwrap());
-
         loop {
-            let option = self.process_key_press().unwrap();
-            if option == EditorHealth::Exit {
+            self.render();
+            let option = self.process_key_press();
+            if let Some(EditorHealth::Exit) = option {
                 break;
             }
         }
+    }
+
+    pub(crate) fn render(&mut self) {
+        let ed_controller = self.editor_controller.as_mut().unwrap();
+        let ed_context = self.editor_context.as_ref().unwrap();
+        let rend = self.renderer.as_mut().unwrap();
+        rend
+            .render(ed_controller, 
+                    ed_context);
+
+        log::debug!("Rendering thread is spawned");
     }
 
     pub(crate) fn open(&mut self, inputf: &str) -> std::io::Result<()> {
@@ -386,25 +392,40 @@ impl Editor {
         //In this mode we show user typed value.
         //self.terminal.control_echo(true);
         // TODO: Hacky render fix alter
-        let cursor_c = self.editor_controller.as_ref().unwrap().cursor.clone();
+        let editor_controller = self.editor_controller.as_mut().unwrap();
+        let cursor_c = editor_controller.cursor;
         cursor::naive_move_cursor_2d(
-                &mut self.editor_controller.as_mut().unwrap().terminal,
+                &mut editor_controller.terminal,
                 cursor_c.rows + 2,
                 0,
             );
-        self.clear_status_message_from_editor();
+        
+        // Clear status msg from editor
+        let status_len: usize = self
+            .editor_context
+            .as_ref()
+            .unwrap()
+            .status_message
+            .capacity();
+        let mut cmd_buffer = String::new();
+        cmd_buffer.push(b':' as char);
+        for _i in 0..status_len {
+            cmd_buffer.push(' ');
+        }
+        editor_controller
+            .terminal
+            .write(cmd_buffer.as_bytes());
         let mut cmd = String::new();
         cursor::naive_move_cursor_2d(
-                &mut self.editor_controller.as_mut().unwrap().terminal,
+                &mut editor_controller.terminal,
                 cursor_c.rows + 2,
                 2,
             );
+
         // REFREFREFACTOR
         loop {
-            let key = self
-                .editor_controller
-                .as_mut()
-                .unwrap()
+            let key = 
+                editor_controller
                 .terminal
                 .read_key()
                 .unwrap();
@@ -413,13 +434,13 @@ impl Editor {
                 // ALL this to have backspace HAHAHA
                 cmd.pop();
                 cursor::naive_move_cursor(
-                    &mut self.editor_controller.as_mut().unwrap().terminal,
+                    &mut editor_controller.terminal,
                     CursorDirections::Left,
                     1,
                 );
-                self.editor_controller.as_mut().unwrap().terminal.write(b" ");
+                editor_controller.terminal.write(b" ");
                 cursor::naive_move_cursor(
-                    &mut  self.editor_controller.as_mut().unwrap().terminal,
+                    &mut  editor_controller.terminal,
                     CursorDirections::Left,
                     1,
                 );
@@ -430,7 +451,7 @@ impl Editor {
             } else if key == 27 as u8 {
                 break;
             } else {
-                self.editor_controller.as_mut().unwrap().terminal.write(&[key]);
+                editor_controller.terminal.write(&[key]);
             }
             cmd.push(key as char);
         }
@@ -439,32 +460,32 @@ impl Editor {
         self.run_cmd(cmd.split(" ").collect())
     }
     pub(crate) fn handle_insert_mode(&mut self, k: u8) -> Option<EditorHealth> {
+        let ed_c  = self.editor_controller.as_mut().unwrap();
         match k {
             b'\x1B' => self.change_mode(EditorModes::Normal),
             b'\x7F' => {
                 self.editor_context.as_mut().unwrap().dirty = 1;
                 operations::insert::remove_char(
-                    &mut self.editor_controller.as_ref().unwrap().cursor.clone(),
-                    &mut self.editor_controller.as_mut().unwrap().data,
+                    &mut ed_c.cursor,
+                    &mut ed_c.data,
                 )
             }
             _ => {
                 self.editor_context.as_mut().unwrap().dirty = 1;
                 operations::insert::insert_char(
-                    &mut self.editor_controller.as_ref().unwrap().cursor.clone(),
-                    &mut self.editor_controller.as_mut().unwrap().data,
+                    &mut ed_c.cursor,
+                    &mut ed_c.data,
                     k,
                 )
             }
         }
     }
     pub(crate) fn move_cursor_insert(&mut self, k: u8) -> Option<EditorHealth> {
-        let data_new_lines = self.editor_controller.as_ref().unwrap().data.new_lines.clone();
+        let editor_controller = self.editor_controller.as_mut().unwrap();
+        let data_new_lines = &editor_controller.data.new_lines;
         match k {
             b'I' => {
-                self.editor_controller
-                    .as_mut()
-                    .unwrap()
+                editor_controller
                     .cursor
                     .move_cursor(
                         &data_new_lines,
@@ -475,9 +496,7 @@ impl Editor {
                 self.change_mode(EditorModes::Insert);
             }
             b'A' => {
-                self.editor_controller
-                    .as_mut()
-                    .unwrap()
+                editor_controller
                     .cursor
                     .move_cursor(
                         &data_new_lines,
@@ -488,9 +507,7 @@ impl Editor {
                 self.change_mode(EditorModes::Insert);
             }
             b'a' => {
-                self.editor_controller
-                    .as_mut()
-                    .unwrap()
+                editor_controller
                     .cursor
                     .move_cursor(
                         &data_new_lines,
@@ -505,14 +522,12 @@ impl Editor {
         Some(EditorHealth::Healthy)
     }
     pub(crate) fn navigate(&mut self, k: u8) -> Option<EditorHealth> {
+        let editor_controller = self.editor_controller.as_mut().unwrap();
         // TODO: Make here better A lot of repetittions
-        log::debug!("{:?}", self.editor_controller.as_ref().unwrap().cursor);
-        let data_new_lines = self.editor_controller.as_ref().unwrap().data.new_lines.clone();
+        log::debug!("{:?}", editor_controller.cursor);
+        let data_new_lines = &editor_controller.data.new_lines;
         match k {
-            b'h' => self
-                .editor_controller
-                .as_mut()
-                .unwrap()
+            b'h' => editor_controller
                 .cursor
                 .move_cursor(
                     &data_new_lines,
@@ -520,10 +535,8 @@ impl Editor {
                     1,
                 )
                 .unwrap(),
-            b'j' => self
-                .editor_controller
-                .as_mut()
-                .unwrap()
+            b'j' => 
+                editor_controller
                 .cursor
                 .move_cursor(
                     &data_new_lines,
@@ -531,10 +544,8 @@ impl Editor {
                     1,
                 )
                 .unwrap(),
-            b'k' => self
-                .editor_controller
-                .as_mut()
-                .unwrap()
+            b'k' => 
+                editor_controller
                 .cursor
                 .move_cursor(
                     &data_new_lines,
@@ -542,10 +553,8 @@ impl Editor {
                     1,
                 )
                 .unwrap(),
-            b'l' => self
-                .editor_controller
-                .as_mut()
-                .unwrap()
+            b'l' => 
+                editor_controller
                 .cursor
                 .move_cursor(
                     &data_new_lines,
@@ -553,10 +562,8 @@ impl Editor {
                     1,
                 )
                 .unwrap(),
-            x if x == Keys::cntrl(b'd') => self
-                .editor_controller
-                .as_mut()
-                .unwrap()
+            x if x == Keys::cntrl(b'd') => 
+                editor_controller
                 .cursor
                 .move_cursor(
                     &data_new_lines,
@@ -564,10 +571,8 @@ impl Editor {
                     20,
                 )
                 .unwrap(),
-            x if x == Keys::cntrl(b'u') => self
-                .editor_controller
-                .as_mut()
-                .unwrap()
+            x if x == Keys::cntrl(b'u') => 
+                editor_controller
                 .cursor
                 .move_cursor(
                     &data_new_lines,

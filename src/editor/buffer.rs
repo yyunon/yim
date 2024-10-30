@@ -97,6 +97,9 @@ impl AppendBuffer {
             .filter(|(_, d)| **d == b'\n')
             .map(|(i, _)| i as i32)
             .collect::<Vec<i32>>();
+        if self.new_lines.is_empty() {
+            self.new_lines.push(self.size as i32);
+        }
     }
     pub(crate) fn to_string(&self) -> String {
         String::from_utf8_lossy(&self.buffer).to_string()

@@ -55,6 +55,7 @@ impl Cursor {
         self.c_y = 0;
         self.rows = 0;
         self.cols = 0;
+        self.row_offset = 0;
         self.editor_configs = EditorConfigs::default();
     }
     pub(crate) fn x(&self) -> usize {
@@ -90,7 +91,7 @@ impl Cursor {
         self.cols = d
     }
     pub(crate) fn calculate_row_offset(&mut self) {
-        if self.c_y < self.row_offset {
+        if self.c_y <= self.row_offset {
             self.row_offset = self.c_y;
         } else if self.c_y >= self.row_offset + self.rows {
             self.row_offset = self.c_y - self.rows + 1;
@@ -99,6 +100,7 @@ impl Cursor {
     // Gets the cursor returns the location in the file
     pub(crate) fn calculate_file_index(&self, new_lines: &Vec<i32>, x: usize, y: usize) -> usize {
         //We know that new lines array is sorted as that is the wau we insert
+        log::debug!("File Index: {}, {}", x,y);
         let (il, _) = self.calculate_row_of_insert_indices(y, new_lines);
         il + x
     }
@@ -111,7 +113,7 @@ impl Cursor {
         if i >= new_lines.len() {
             return (0, 0);
         }
-        let index_r = new_lines[i] as usize;
+        let index_r = new_lines[i];
         let mut index_l = 0;
         if i != 0 {
             index_l = new_lines[i - 1] + 1;
@@ -125,6 +127,7 @@ impl Cursor {
         offset: usize,
     ) -> Result<(), ()> {
         // TODO: Make here better A lot of repetittions
+        log::debug!("{:?}", new_lines);
         let mut row_insert_size = 0;
         if self.c_y < self.rows + self.row_offset {
             let (index_l, index_r) =

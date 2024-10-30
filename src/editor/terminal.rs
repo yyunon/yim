@@ -106,6 +106,7 @@ impl Terminal {
                 }
                 (0, 0)
             } else {
+                log::debug!("w_size.row = {}, w_size.col = {}", w_size.ws_col, w_size.ws_row);
                 (w_size.ws_col as usize, w_size.ws_row as usize)
             }
         }

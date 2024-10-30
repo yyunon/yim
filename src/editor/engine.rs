@@ -84,16 +84,15 @@ pub mod operations {
                 cursor.set_x(0);
                 cursor.up_y(1);
             } else {
-                log::debug!("{:?}", cursor);
                 let ind = cursor.calculate_file_index(
                     &data.new_lines,
                     cursor.absx() as usize,
                     cursor.absy() as usize,
                 );
+                log::debug!("{:?}", ind);
                 data.insert(ind, ch);
                 cursor.up_x(1);
             }
-            //dirty = 1;
             Some(EditorHealth::Healthy)
         }
     }

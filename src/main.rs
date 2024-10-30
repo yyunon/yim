@@ -22,18 +22,13 @@ fn main() -> std::io::Result<()> {
     log::info!("Launching yim...");
     let args: Vec<String> = env::args().collect();
 
-    let stdin = stdin();
-    let stdout = stdout();
-    let mut editor = Editor::new(stdin, stdout);
-    editor.editor_configs = ed;
+    let mut editor = Editor::new(stdin(), stdout(), Some(ed));
 
     editor.init_editor();
-    let mut openfile = "";
     if args.len() > 1 {
-        openfile = &args[1];
-        editor.open(openfile)?;
+        editor.open(&args[1])?;
     }
-    editor.set_status_message("Welcome Yuksel!");
+    //editor.set_status_message("Welcome Yuksel!");
     editor.launch_editor();
     Ok(())
 }
